@@ -1,0 +1,19 @@
+{
+  "notes": [
+    {
+      "id": 1,
+      "content": "Besok harus lanjut belajar dan buat AI assistant",
+      "created_at": "2026-04-13 14:07"
+    },
+    {
+      "id": 2,
+      "content": "Hari ini belajar LangGraph",
+      "created_at": "2026-04-13 21:48"
+    },
+    {
+      "id": 3,
+      "content": "Hari Rabu ada interview offline di Grand Slipi Tower",
+      "created_at": "2026-04-13 23:34"
+    }
+  ]
+}
