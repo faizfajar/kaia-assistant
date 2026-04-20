@@ -1,4 +1,25 @@
+# Environments & Secrets
 .env
 venv/
-*.json__pycache__/
-*.pyc
+.venv/
+
+# Python internal
+__pycache__/
+*.py[cod]
+
+# Data & Models
+data/vectorstore/
+data/models/
+memory.json
+notes.json
+
+# OS specific (Penting buat pengguna Mac)
+.DS_Store
+._*
+
+# Editor settings
+.vscode/
+
+# Local utility scripts
+ingest_data.py
+check_models.py
