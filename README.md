@@ -1,112 +1,91 @@
-# Kaia — AI Personal Assistant
+# Kaia — Multi-Agent AI Assistant
 
-A personal AI companion built with Python, LangChain, LangGraph, and Gemini API.
-Kaia is not just a chatbot — she has a persistent personality, remembers you across sessions,
-and can take real actions through a extensible tool system.
+Kaia is a production-grade autonomous companion built with **Python**, **LangGraph**, and **Gemini 1.5/2.5 Flash**. Unlike standard chatbots, Kaia utilizes a **Multi-Agent Star Topology** to orchestrate specialized tasks—ranging from personal administration to deep technical research.
 
 ---
 
-## Features
+## 🚀 Core Features
 
-- **Persona** — warm, friendly character defined via system prompt
-- **Short-term memory** — remembers context within a session via chat history
-- **Long-term memory** — persists important facts across sessions using extraction-based memory (`[REMEMBER]` pattern)
-- **Function calling** — executes real actions via LangGraph's ReAct agent loop
-- **Tool registry** — extensible tool system, add new tools without touching core logic
-- **LangSmith monitoring** — full tracing and observability of every run
+- **Multi-Agent Orchestration** — Uses a central **Supervisor** node to delegate tasks to specialized agents (Secretary, Researcher, etc.) in a Hub-and-Spoke model.
+- **Structured Output (Pydantic)** — Robust routing logic enforced via Pydantic schemas to ensure zero-hallucination agent delegation and reliable state transitions.
+- **Hybrid Memory System** — Combines session-based chat history with extraction-based long-term memory (`[REMEMBER]` protocol) and **RAG** for technical documentation.
+- **Production Observability** — Deep integration with **LangSmith** for full-cycle tracing, debugging, and chain performance evaluation.
+- **State Integrity Protocol** — Intelligent handling of "Write-before-Read" operations to prevent race conditions during multi-intent queries.
 
 ---
+
+## 🏗️ Architecture: The Star Topology
+
+Kaia operates on a **Star Topology** where a central Orchestrator (Supervisor) manages the state and coordinates specialized workers. This ensures modularity and scalability.
+
+```mermaid
+graph TD
+    User([User Input]) --> Supervisor{Supervisor Agent}
+    Supervisor -- Pydantic Routing --> Secretary[Secretary Agent]
+    Supervisor -- Pydantic Routing --> Researcher[Researcher Agent]
+    
+    Secretary -- Tool Call --> Notes[(Notes JSON)]
+    Researcher -- RAG --> Docs[(Private Docs)]
+    
+    Notes --> Supervisor
+    Docs --> Supervisor
+    Supervisor --> Final([Final Response])
+```
+
+## Technical Stack:
+- Orchestration: LangGraph (Stateful, Multi-Agent)
+- Model: Gemini 2.5 Flash (via LangChain Google GenAI)
+- Data Validation: Pydantic (Structured Output)
+- Monitoring: LangSmith
+- Storage: JSON (Memory/Notes) + Vector DB (RAG)
 
 ## Project Structure
 
 ```
-kaia/
+kaia-assistant/
 ├── src/
 │   ├── agent/
-│   │   ├── persona.py          # System prompt and [REMEMBER] instructions
-│   │   ├── memory.py           # Long-term memory read/write
-│   │   └── graph.py            # LangGraph agent (nodes, edges, state)
+│   │   ├── workers/         # Specialized agent nodes (Secretary, Researcher)
+│   │   ├── prompts.py       # Centralized system prompts & worker identities
+│   │   ├── state.py         # LangGraph State definition (TypedDict)
+│   │   └── graph.py         # Star Topology Graph & Pydantic Routing logic
 │   ├── tools/
-│   │   ├── __init__.py         # Central tool registry (ALL_TOOLS)
-│   │   ├── datetime_tool.py    # get_current_datetime tool
-│   │   └── notes_tool.py       # save_note / get_notes / delete_note tools
-│   └── __init__.py
+│   │   ├── __init__.py      # Central tool registry
+│   │   ├── secretary_tools.py # Admin tools (Notes, Datetime)
+│   │   └── rag_tool.py      # RAG & Document retrieval tools
 ├── data/
-│   ├── memory.json             # Persisted long-term memory
-│   └── notes.json              # Persisted notes
-├── main.py                     # Entry point — chat loop
-├── .env.example                # Environment variable template
+│   ├── memory.json          # Persisted extraction-based memory
+│   └── notes.json           # Managed personal notes
+├── main.py                  # Entry point (Chat loop + Memory extraction)
 └── requirements.txt
 ```
 
----
 
-## Architecture
+## 🛠️ Specialized Agents & Toolsets
 
-```
-User input
-    ↓
-main.py (chat loop + memory extraction)
-    ↓
-LangGraph Agent ─────────────────────────────────
-│                                                │
-│   [llm_node] ──→ should_use_tools?             │
-│        ↑               │           │           │
-│        │          [tool_node]    [END]          │
-│        └── loop back (ReAct) ──┘               │
-│                                                │
-──────────────────────────────────────────────────
-    ↓
-Response to user
+1. Supervisor (The Orchestrator)
+The "Central Brain" of the system. It uses Structured Output to analyze user intent and decide whether to call a specialist or provide a final synthesis. It acts as a transaction manager to ensure all sub-tasks are completed before finishing.
 
-Supporting components:
-- persona.py      → injected into every llm_node call
-- memory.json     → loaded at session start, updated during chat
-- Tools registry  → bound to LLM via bind_tools()
-- LangSmith       → traces every run automatically
-```
+2. Secretary (The Admin)
+Handles personal state management and scheduling.
 
-### How the ReAct loop works
+- get_current_datetime: Provides contextual time awareness for relative queries.
 
-1. User sends a message
-2. `llm_node` calls Gemini with persona + memory + chat history
-3. If Gemini requests a tool → `tool_node` executes it → result injected back to LLM
-4. Loop continues until Gemini produces a final text response
-5. Response displayed to user, `[REMEMBER]` tags extracted and saved
+- save_note / get_notes / delete_note: Full CRUD operations for personal administrative data.
 
-## Available Tools
+3. Researcher (The Knowledge Specialist)
+Executes RAG (Retrieval Augmented Generation) to answer questions based on private documents, such as CVs, project technical specs, and engineering logs.
 
-| Tool | Description |
-|---|---|
-| `get_current_datetime` | Returns current date and time |
-| `save_note` | Saves a note or reminder to `data/notes.json` |
-| `get_notes` | Retrieves all saved notes |
-| `delete_note` | Deletes a note by ID |
+## 🧠 Memory Systems
+Short-term: Managed via a sliding-window chat_history within the LangGraph state.
 
-## How Memory Works
+Long-term: An extraction-based system that parses [REMEMBER: fact] tags from AI responses. These facts are persisted in memory.json and injected into the Supervisor's context during initialization.
 
-**Short-term memory** — `chat_history` list maintained in-session. Cleared when the program exits. Sent with every LLM request so Kaia remembers context within a conversation.
-
-**Long-term memory** — facts extracted from conversation and persisted to `data/memory.json`. Kaia is instructed to append `[REMEMBER: fact]` tags when the user mentions something significant. These are parsed, saved, and injected into every future session's system prompt.
-
-```json
-{
-  "user_name": "Faiz",
-  "facts": [
-    "Faiz has 4 years of experience as a software developer",
-    "Faiz is currently learning AI engineering"
-  ],
-  "last_seen": "2026-04-13 23:00"
-}
-```
-
----
-
-## Roadmap
-
-- [ ] Google Calendar integration
-- [ ] GitHub MCP integration
-- [ ] Web search tool
-- [ ] RAG — answer from personal documents
-- [ ] Streamlit web interface
-- [ ] LangGraph multi-agent support
+## 📈 Roadmap
+- [x] Multi-Agent Star Topology implementation
+- [x] Pydantic Structured Output for routing
+- [x] LangSmith observability integration
+- [ ] GitHub MCP Integration (Active Development)
+- [ ] Google Calendar MCP Integration (Planned)
+- [ ] Web Search Tool (News Agent)
+- [ ] Streamlit/Next.js Web Interface
