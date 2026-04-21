@@ -14,7 +14,7 @@ from flashrank import Ranker, RerankRequest
 # Configuration
 VECTOR_DB_PATH = "data/vectorstore"
 EMBEDDING_MODEL = "models/gemini-embedding-001"
-LLM_MODEL = "gemini-2.5-flash"
+LLM_MODEL = "gemini-3.1-flash-lite-preview"
 
 # Initialize Ranker once
 try:

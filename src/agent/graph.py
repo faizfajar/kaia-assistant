@@ -1,174 +1,201 @@
 import os
-from typing import Annotated
+from typing import Literal, Annotated, Sequence
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, BaseMessage
-
-from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
+from langgraph.graph import StateGraph, END, START
 from langgraph.prebuilt import ToolNode
 
-from typing_extensions import TypedDict
-
-from src.agent.persona import KAIA_SYSTEM_PROMPT
+# Internal imports
+from src.agent.state import AgentState
+from src.agent.prompts import SUPERVISOR_SYSTEM_PROMPT
+from src.agent.workers.researcher import researcher_node
+from src.agent.workers.secretary import secretary_node
 from src.tools import ALL_TOOLS
 
 load_dotenv()
 
-# ── LLM Setup ──────────────────────────────────────────────────────────────────
+# --- Configuration: Structured Output Schema ---
+class RouterConfig(BaseModel):
+    """
+    Schema for the Supervisor's routing decision. 
+    Ensures the LLM selects a valid next node or finishes the cycle.
+    """
+    next: Literal["Researcher", "Secretary", "DevOps", "News", "FINISH"] = Field(
+        description="The next specialist agent to act, or 'FINISH' if the user request is fully satisfied."
+    )
+
+# --- LLM Setup ---
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
+    model="gemini-3.1-flash-lite-preview",
     google_api_key=os.getenv("GEMINI_API_KEY"),
-    temperature=0.7
+    temperature=0.1 # Low temperature for consistent routing logic
 )
 
-llm_with_tools = llm.bind_tools(ALL_TOOLS)
+# Bind the RouterConfig schema to the LLM to enforce structured output
+structured_llm = llm.with_structured_output(RouterConfig)
 
-# ── State Definition ───────────────────────────────────────────────────────────
+# --- Node Definitions ---
 
-class KaiaState(TypedDict):
-    """
-    State that flows through the graph.
-    Every node reads from and writes to this state.
+def supervisor_node(state: AgentState) -> dict:
+    system_message = {"role": "system", "content": SUPERVISOR_SYSTEM_PROMPT}
+    
+    try:
+        decision = structured_llm.invoke([system_message] + state["messages"])
+        
+        if decision.next == "FINISH":
+            last_message = state["messages"][-1]
+            
+            # If the last message is a ToolMessage or empty, try to synthesize
+            if not hasattr(last_message, "content") or len(last_message.content) < 5:
+                prompt = "Briefly summarize the action taken for the user in a friendly way."
+                # Use a try-except here to catch 503 errors during synthesis
+                try:
+                    response = llm.invoke(state["messages"] + [HumanMessage(content=prompt)])
+                    return {"next": "FINISH", "messages": [response]}
+                except:
+                    # Fallback: if synthesis fails, just finish
+                    return {"next": "FINISH"}
+            
+            return {"next": "FINISH"}
+        
+        return {"next": decision.next}
+    except Exception as e:
+        # If the routing itself fails, we force a finish to prevent loops
+        return {"next": "FINISH"}
 
-    'messages' uses add_messages reducer — meaning each node
-    appends to the list rather than replacing it entirely.
-    This is called a 'reducer' in LangGraph terminology.
-    """
-    messages: Annotated[list[BaseMessage], add_messages]
-    user_name: str
-    memory_summary: str
-
-
-# ── Prompt Template ────────────────────────────────────────────────────────────
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", KAIA_SYSTEM_PROMPT),
-    MessagesPlaceholder(variable_name="messages"),
-])
-
-
-# ── Node Definitions ───────────────────────────────────────────────────────────
-
-def llm_node(state: KaiaState) -> dict:
-    """
-    LLM Node — the reasoning step of the ReAct pattern.
-
-    Receives current state, formats the prompt with persona context,
-    invokes the LLM, and returns the response to be appended to state.
-    """
-    formatted = prompt.invoke({
-        "user_name": state["user_name"],
-        "memory_summary": state["memory_summary"],
-        "messages": state["messages"],
-    })
-
-    response = llm_with_tools.invoke(formatted)
-    return {"messages": [response]}
-
-
-# ToolNode is a prebuilt LangGraph node that handles tool execution.
-# It automatically reads tool_calls from the last message,
-# executes the corresponding tools, and returns ToolMessages.
+# Centralized tool node for workers to execute their specific functions
 tool_node = ToolNode(ALL_TOOLS)
 
+# --- Routing ---
 
-# ── Routing / Conditional Edge ─────────────────────────────────────────────────
-
-def should_use_tools(state: KaiaState) -> str:
+def router(state: AgentState) -> Literal["Researcher", "Secretary", "FINISH"]:
     """
-    Conditional edge function — the routing decision point.
+    Directs the workflow based on the Supervisor's structured decision.
+    """
+    return state["next"]
 
-    Checks if the last LLM message contains tool_calls.
-    Returns the name of the next node to visit:
-    - "tools"  → LLM wants to call a tool (continue the loop)
-    - END      → LLM has a final answer (exit the graph)
-
-    This is the core of the ReAct loop:
-    Reason (llm_node) → decide → Act (tool_node) → back to Reason
+def worker_should_continue(state: AgentState) -> Literal["call_tool", "Supervisor"]:
+    """
+    Conditional edge to handle tool calling logic within workers.
+    If the worker generates tool_calls, route to tool_node; otherwise, return to Supervisor.
     """
     last_message = state["messages"][-1]
 
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "tools"
+        return "call_tool"
+    return "Supervisor"
 
-    return END
-
-
-# ── Graph Construction ─────────────────────────────────────────────────────────
+# --- Graph Construction ---
 
 def build_graph() -> StateGraph:
     """
-    Construct and compile the LangGraph agent graph.
-
-    Graph structure:
-        [START] → [llm_node] → should_use_tools?
-                                    ↙         ↘
-                             [tool_node]      [END]
-                                    ↓
-                              [llm_node]  ← loops back
+    Constructs the Multi-Agent Star Topology.
+    Supervisor acts as the hub for all communication and delegation.
     """
-    graph = StateGraph(KaiaState)
+    workflow = StateGraph(AgentState)
 
-    # Register nodes
-    graph.add_node("llm", llm_node)
-    graph.add_node("tools", tool_node)
+    # 1. Register specialized worker and orchestrator nodes
+    workflow.add_node("Supervisor", supervisor_node)
+    workflow.add_node("Researcher", researcher_node)
+    workflow.add_node("Secretary", secretary_node)
+    workflow.add_node("call_tool", tool_node)
 
-    # Entry point — graph always starts at llm node
-    graph.set_entry_point("llm")
+    # 2. Define the graph entry point
+    workflow.set_entry_point("Supervisor")
 
-    # Conditional edge from llm — route based on should_use_tools()
-    graph.add_conditional_edges(
-        source="llm",
-        path=should_use_tools,
-        path_map={"tools": "tools", END: END}
+    # 3. Define conditional edges for the Supervisor (Orchestration)
+    workflow.add_conditional_edges(
+        "Supervisor",
+        router,
+        {
+            "Researcher": "Researcher",
+            "Secretary": "Secretary",
+            "FINISH": END
+        }
     )
 
-    # Fixed edge — after tools always go back to llm
-    # This creates the ReAct loop
-    graph.add_edge("tools", "llm")
+    # 4. Define edges for Workers (Tool Loop and Feedback)
+    # Researcher logic
+    workflow.add_conditional_edges(
+        "Researcher",
+        worker_should_continue,
+        {
+            "call_tool": "call_tool",
+            "Supervisor": "Supervisor"
+        }
+    )
 
-    return graph.compile()
+    # Secretary logic
+    workflow.add_conditional_edges(
+        "Secretary",
+        worker_should_continue,
+        {
+            "call_tool": "call_tool",
+            "Supervisor": "Supervisor"
+        }
+    )
 
+    # After any tool execution, the graph must return to the Supervisor for review
+    workflow.add_edge("call_tool", "Supervisor")
 
-# Compile once at module load — reused for every invocation
+    return workflow.compile()
+
+# Instantiate the compiled graph for use
 kaia_graph = build_graph()
 
+# --- Public Interface ---
 
-# ── Public Interface ───────────────────────────────────────────────────────────
+import logging
+from langchain_core.messages import HumanMessage
 
 def invoke_kaia(
     user_input: str,
-    user_name: str,
-    memory_summary: str,
     chat_history: list
 ) -> str:
     """
-    Public interface for invoking Kaia via the LangGraph agent.
-
-    Constructs initial state and runs the graph until END.
-    The graph handles all tool calling and looping internally.
-
-    Args:
-        user_input: Latest message from the user.
-        user_name: Name of the user (injected into persona).
-        memory_summary: Long-term memory summary (injected into persona).
-        chat_history: Previous messages in this session.
-
-    Returns:
-        Kaia's final text response.
+    Robust entry point for the Kaia Assistant.
+    Implements message backtracking and fail-safe error handling for production stability.
     """
-    initial_state: KaiaState = {
+    # 1. Initialize Graph State
+    initial_state: AgentState = {
         "messages": [*chat_history, HumanMessage(content=user_input)],
-        "user_name": user_name,
-        "memory_summary": memory_summary,
+        "next": "Supervisor"
     }
 
-    final_state = kaia_graph.invoke(initial_state)
+    try:
+        # 2. Execute the LangGraph workflow
+        # Note: Ensure the graph is compiled with a checkpointer if persistence is needed
+        final_state = kaia_graph.invoke(initial_state)
+        messages = final_state.get("messages", [])
 
-    # Extract the last message — this is Kaia's final response
-    last_message = final_state["messages"][-1]
-    return last_message.content
+        if not messages:
+            return "Graph execution returned an empty state. Please verify the Supervisor routing."
+
+        # 3. Message Backtracking Logic
+        # We iterate backwards through the history to find the most recent 
+        # message that contains actual, displayable string content.
+        for msg in reversed(messages):
+            # Check if the message has content and is not just a tool-call placeholder
+            if hasattr(msg, "content") and isinstance(msg.content, str) and msg.content.strip():
+                return msg.content
+
+        # 4. Fallback for successful execution but empty content
+        return "I have processed your request, but no text response was generated."
+
+    except Exception as e:
+        # 5. Defensive Error Handling for API Spikes (e.g., 503 Overload)
+        error_str = str(e).lower()
+        logging.error(f"Kaia Runtime Error: {error_str}")
+
+        # Handling specific Gemini API failure modes
+        if "503" in error_str or "overloaded" in error_str:
+            return "The Gemini engine is currently experiencing high demand (Error 503). Please wait a few seconds and try again."
+        
+        if "rate_limit" in error_str or "429" in error_str:
+            return "We've hit the API rate limit. Let's take a short break before trying again."
+
+        return "I encountered a technical issue while processing your request. Could you please repeat that?"

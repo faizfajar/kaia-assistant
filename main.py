@@ -1,6 +1,7 @@
 import re
 import logging
 from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, AIMessage
 
 # Load environment variables at the absolute start
 load_dotenv()
@@ -19,7 +20,7 @@ API_KEY_PATTERN = re.compile(r"AIza[0-9A-Za-z-_]{35}")
 # Generic pattern for secrets, passwords, or tokens found in text
 SECRET_PATTERN = re.compile(r"(?i)(api_key|secret|password|token)\s*[:=]\s*['\"]?[0-9a-zA-Z-_]{16,}['\"]?")
 
-# Internal tag for Kaia's long-term memory updates
+# Internal tag for Kaia's autonomous long-term memory updates
 REMEMBER_PATTERN = re.compile(r"\[REMEMBER:.*?\]", re.DOTALL)
 
 # ── Security & Normalization Helpers ─────────────────────────────────────────
@@ -60,10 +61,10 @@ def get_text_from_response(content) -> str:
     
     return str(content)
 
-def clean_response(response_text) -> str:
+def clean_response(response_text: str) -> str:
     """
     Main pipeline for preparing the final output for the user.
-    Removes internal memory tags and applies security filters.
+    Normalization -> Internal Tag Removal -> Security Redaction.
     """
     try:
         # Normalize the raw content
@@ -81,44 +82,41 @@ def clean_response(response_text) -> str:
 
 def extract_and_save_facts(response_text: str) -> None:
     """
-    Scans the raw LLM output for memory tags and persists them.
-    Note: We store the raw fact in memory but redact it in the UI.
+    Scans the raw LLM output for memory tags and persists them to long-term storage.
+    Filters out the [REMEMBER:] prefix before saving to the memory database.
     """
     normalized = get_text_from_response(response_text)
     facts = REMEMBER_PATTERN.findall(normalized)
     
     for fact in facts:
-        # Strip the tags before saving to the JSON/Vector database
         clean_fact = fact.replace("[REMEMBER:", "").replace("]", "").strip()
         add_fact(clean_fact)
-        # Log to terminal for developer awareness
+        # Internal log for developer awareness during runtime
         print(f"  Memory Saved: {clean_fact}")
 
 # ── Chat Interface ──────────────────────────────────────────────────────────
 
 def greet_user() -> str:
     """
-    Loads session memory and provides a personalized greeting.
+    Handles session initialization and personalized user greeting.
     """
     memory = load_memory()
     user_name = memory.get("user_name")
 
     if user_name:
-        last_seen = memory.get("last_seen", "recently")
         print(f"\nKaia: Haii {user_name}! Seneng ketemu lagi 😊")
-        print(f"       Terakhir kita ngobrol {last_seen}.")
     else:
         user_name = input("Hai! Siapa namamu? → ").strip()
         memory["user_name"] = user_name
         save_memory(memory)
         print(f"\nKaia: Haii {user_name}! Seneng bisa kenalan 😊")
-        print(f"       Ada yang bisa aku bantu?")
 
     return user_name
 
 def chat() -> None:
     """
-    The main conversation loop managing the graph execution and history.
+    The main interaction loop. Handles the transition from Monolithic 
+    to Multi-Agent (A2A) orchestration.
     """
     user_name = greet_user()
     print("(type 'exit' to quit)\n")
@@ -130,30 +128,29 @@ def chat() -> None:
             user_input = input(f"{user_name}: ").strip()
 
             if user_input.lower() in ["exit", "quit"]:
-                print("Kaia: Oke, sampai ketemu lagi! Take care ya 👋")
+                print("Kaia: Oke, sampai ketemu lagi! 👋")
                 break
 
             if not user_input:
                 continue
 
-            # Execute the LangGraph workflow
+            # ── Multi-Agent Invocation ───────────────────────────────────────
+            # The signature is updated for A2A. Internal agents (Secretary)
+            # now handle user_name and summary retrieval autonomously.
             raw_reply = invoke_kaia(
                 user_input=user_input,
-                user_name=user_name,
-                memory_summary=get_memory_summary(),
                 chat_history=chat_history
             )
 
-            # Internal processing (Memory updates)
+            # Internal Persistent memory updates
             extract_and_save_facts(raw_reply)
             
-            # External processing (Safe UI output)
+            # External Safe and clean UI response
             kaia_reply = clean_response(raw_reply)
 
             print(f"\nKaia: {kaia_reply}\n")
 
-            # Maintain history for conversation context
-            from langchain_core.messages import HumanMessage, AIMessage
+            # Maintain session history using standard message objects
             chat_history.append(HumanMessage(content=user_input))
             chat_history.append(AIMessage(content=kaia_reply))
             
