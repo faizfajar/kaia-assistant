@@ -3,21 +3,27 @@ from src.agent.state import AgentState
 from src.agent.prompts import SECRETARY_PROMPT
 from src.tools import save_note, get_notes, delete_note, get_current_datetime
 
-def secretary_node(state: AgentState):
+# Module-level instantiation — avoids re-creating LLM on every node call
+_llm = ChatGoogleGenerativeAI(
+    model="gemini-3.1-flash-lite-preview",
+    temperature=0
+)
+
+_tools = [save_note, get_notes, delete_note, get_current_datetime]
+_llm_with_tools = _llm.bind_tools(_tools)
+
+
+def secretary_node(state: AgentState) -> dict:
     """
-    Worker node specialized in task management, notes, and scheduling.
-    Ensures user's personal administrative tasks are handled efficiently.
+    Worker node for task management, notes, and scheduling.
+    
+    Sets active_worker so call_tool knows to return here
+    after tool execution instead of routing back to Supervisor.
     """
-    
-    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite-preview", temperature=0)
-    
-    # Bind administrative tools
-    tools = [save_note, get_notes, delete_note, get_current_datetime]
-    llm_with_tools = llm.bind_tools(tools)
-    
     system_message = {"role": "system", "content": SECRETARY_PROMPT}
-    
-    # Process the conversation history
-    response = llm_with_tools.invoke([system_message] + state["messages"])
-    
-    return {"messages": [response]}
+    response = _llm_with_tools.invoke([system_message] + list(state["messages"]))
+
+    return {
+        "messages": [response],
+        "active_worker": "Secretary"
+    }
