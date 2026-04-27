@@ -1,6 +1,6 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from src.agent.state import AgentState
-from src.agent.prompts import NEWS_PROMPT
+from src.agent.prompts import get_news_prompt
 from src.tools.news_tools import search_news
 
 # Module-level instantiation
@@ -19,7 +19,7 @@ def news_node(state: AgentState) -> dict:
     Sets active_worker so call_tool knows to return here
     after tool execution instead of routing back to Supervisor.
     """
-    system_message = {"role": "system", "content": NEWS_PROMPT}
+    system_message = {"role": "system", "content": get_news_prompt()}
     response = _llm_with_tools.invoke([system_message] + list(state["messages"]))
 
     return {

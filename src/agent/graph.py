@@ -15,7 +15,7 @@ from mcp import StdioServerParameters
 from src.agent.mcp_adapter import MCPToolAdapter
 
 from src.agent.state import AgentState
-from src.agent.prompts import SUPERVISOR_SYSTEM_PROMPT
+from src.agent.prompts import get_supervisor_prompt
 from src.agent.workers.researcher import researcher_node
 from src.agent.workers.secretary import secretary_node
 from src.agent.workers.devops import get_devops_node
@@ -84,7 +84,7 @@ def supervisor_node(state: AgentState) -> dict:
     Uses structured output to enforce strict JSON routing — no free text.
     Falls back to FINISH on any parsing error to prevent infinite loops.
     """
-    system_message = {"role": "system", "content": SUPERVISOR_SYSTEM_PROMPT}
+    system_message = {"role": "system", "content": get_supervisor_prompt()}
 
     try:
         decision = structured_llm.invoke([system_message] + list(state["messages"]))

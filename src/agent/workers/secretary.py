@@ -1,6 +1,6 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from src.agent.state import AgentState
-from src.agent.prompts import SECRETARY_PROMPT
+from src.agent.prompts import get_secretary_prompt
 from src.tools import save_note, get_notes, delete_note, get_current_datetime
 
 # Module-level instantiation — avoids re-creating LLM on every node call
@@ -20,7 +20,7 @@ def secretary_node(state: AgentState) -> dict:
     Sets active_worker so call_tool knows to return here
     after tool execution instead of routing back to Supervisor.
     """
-    system_message = {"role": "system", "content": SECRETARY_PROMPT}
+    system_message = {"role": "system", "content": get_secretary_prompt()}
     response = _llm_with_tools.invoke([system_message] + list(state["messages"]))
 
     return {

@@ -1,6 +1,6 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from src.agent.state import AgentState
-from src.agent.prompts import RESEARCHER_PROMPT
+from src.agent.prompts import get_researcher_prompt
 from src.tools import search_knowledge, add_document_to_db
 
 # Module-level instantiation — avoid re-creating LLM on every node call
@@ -20,7 +20,7 @@ def researcher_node(state: AgentState) -> dict:
     Sets active_worker so call_tool knows to return here
     after tool execution instead of routing back to Supervisor.
     """
-    system_message = {"role": "system", "content": RESEARCHER_PROMPT}
+    system_message = {"role": "system", "content": get_researcher_prompt()}
     response = _llm_with_tools.invoke([system_message] + list(state["messages"]))
 
     return {

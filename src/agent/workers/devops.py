@@ -1,7 +1,7 @@
 import logging
 from langchain_core.messages import AIMessage
 from langgraph.prebuilt import create_react_agent
-from src.agent.prompts import DEVOPS_PROMPT
+from src.agent.prompts import get_devops_prompt
 
 
 def get_devops_node(llm, github_tools: list):
@@ -19,7 +19,7 @@ def get_devops_node(llm, github_tools: list):
     agent = create_react_agent(
         llm,
         tools=github_tools,
-        prompt=DEVOPS_PROMPT
+        prompt=get_devops_prompt()
     )
 
     def devops_node(state) -> dict:

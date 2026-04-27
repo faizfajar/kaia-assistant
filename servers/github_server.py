@@ -14,18 +14,27 @@ logging.basicConfig(level=logging.ERROR, stream=sys.stderr)
 mcp = FastMCP("GitHub-DevOps-Server")
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-if not GITHUB_TOKEN:
-    raise ValueError("GITHUB_TOKEN missing in .env")
 
-gh = Github(auth=Auth.Token(GITHUB_TOKEN))
+# Global variables for lazy initialization
+gh = None
+_user = None
 
-# Validate token on startup
-try:
-    _user = gh.get_user()
-    _username = _user.login
-except GithubException as e:
-    logging.error(f"GitHub auth failed: {e}")
-    sys.exit(1)
+def get_gh_client():
+    global gh, _user
+    if gh is None:
+        if not GITHUB_TOKEN:
+            return None
+        try:
+            gh = Github(auth=Auth.Token(GITHUB_TOKEN))
+            _user = gh.get_user()
+            # Test connection with a light call
+            _user.login
+            return gh
+        except Exception as e:
+            logging.error(f"GitHub client initialization failed: {e}")
+            gh = None # Reset
+            return None
+    return gh
 
 
 @mcp.tool()
@@ -38,9 +47,14 @@ def get_global_activity(limit_repos: int = 5, days: int = 7) -> str:
         limit_repos: Maximum number of repositories to include (default 5).
         days: How many days back to scan for commits (default 7).
     """
+    client = get_gh_client()
+    if not client:
+        return "GitHub Token tidak tersedia atau koneksi gagal. Silakan cek koneksi internet dan .env"
+    
     try:
+        user = client.get_user()
         since_date = datetime.now() - timedelta(days=days)
-        repos = _user.get_repos(sort="pushed", direction="desc")
+        repos = user.get_repos(sort="pushed", direction="desc")
 
         results = []
         count = 0
@@ -91,8 +105,12 @@ def get_commit_details(repo_name: str, commit_sha: str) -> str:
     Retrieves technical details of a specific commit, including changed files.
     Use this only when the user explicitly asks for details or specific changes.
     """
+    client = get_gh_client()
+    if not client:
+        return "GitHub client tidak tersedia."
+
     try:
-        user = gh.get_user()
+        user = client.get_user()
         repo = user.get_repo(repo_name)
         commit = repo.get_commit(commit_sha)
 
