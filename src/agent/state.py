@@ -4,13 +4,14 @@ from langgraph.graph.message import add_messages
 
 class AgentState(TypedDict):
     """
-    Maintains the state of the multi-agent conversation.
-    This structure is passed between the supervisor and specialized workers.
+    Shared state passed between all nodes in the multi-agent graph.
+    
+    - messages: Full conversation history, auto-merged via add_messages reducer
+    - next: Supervisor's routing decision for the current turn
+    - active_worker: Tracks which worker last requested a tool call,
+                     enabling call_tool to return to the correct worker
+                     instead of routing back through Supervisor.
     """
-    
-    # Conversation history with automatic message merging logic
     messages: Annotated[Sequence[BaseMessage], add_messages]
-    
-    # Routing control: Determines which node is activated next in the graph
-    # Options include the specialist names or 'FINISH' to end the cycle
     next: Literal["Researcher", "Secretary", "DevOps", "News", "FINISH"]
+    active_worker: Literal["Researcher", "Secretary", "DevOps", "News", ""]

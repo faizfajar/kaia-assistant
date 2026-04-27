@@ -125,7 +125,8 @@ def chat() -> None:
 
     while True:
         try:
-            user_input = input(f"{user_name}: ").strip()
+            clean_user_label = user_name.replace(":", "").strip()
+            user_input = input(f"{clean_user_label}: ").strip()
 
             if user_input.lower() in ["exit", "quit"]:
                 print("Kaia: Oke, sampai ketemu lagi! 👋")
