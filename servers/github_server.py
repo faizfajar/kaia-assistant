@@ -38,14 +38,15 @@ def get_gh_client():
 
 
 @mcp.tool()
-def get_global_activity(limit_repos: int = 5, days: int = 7) -> str:
+def get_global_activity(days: int = 7, page: int = 1, per_page: int = 10) -> str:
     """
-    Scan all repositories for recent commit activity.
-    Returns the latest commit per repo, sorted by most recently pushed.
+    Scan all repositories for recent commit activity across the entire account.
+    Returns a paginated list of commits sorted by date.
 
     Args:
-        limit_repos: Maximum number of repositories to include (default 5).
         days: How many days back to scan for commits (default 7).
+        page: The page number to retrieve (default 1).
+        per_page: Number of commits per page (default 10).
     """
     client = get_gh_client()
     if not client:
@@ -54,48 +55,54 @@ def get_global_activity(limit_repos: int = 5, days: int = 7) -> str:
     try:
         user = client.get_user()
         since_date = datetime.now() - timedelta(days=days)
-        repos = user.get_repos(sort="pushed", direction="desc")
+        
+        # Scan top 15 most recently pushed repos to find commits
+        # We limit repos scanned to 15 to balance between coverage and API speed
+        repos = user.get_repos(sort="pushed", direction="desc")[:15]
 
-        results = []
-        count = 0
-
+        all_commits = []
         for repo in repos:
-            if count >= limit_repos:
-                break
-
             try:
                 commits = repo.get_commits(since=since_date)
-
-                # totalCount can be unreliable — iterate safely
-                commit_list = list(commits[:1])
-                if not commit_list:
-                    continue
-
-                last_commit = commit_list[0]
-                sha_short = last_commit.sha[:7]
-                
-                date_str = last_commit.commit.author.date.strftime("%d/%m %H:%M")
-
-                # Only take first line of commit message
-                message = last_commit.commit.message.split("\n")[0][:80]
-
-                results.append(f"📦 **{repo.name}** [`{sha_short}`]: {message} ({date_str})")
-                count += 1
-
-            except GithubException:
-                # Skip inaccessible or empty repos silently
-                continue
+                for c in commits:
+                    all_commits.append({
+                        "repo": repo.name,
+                        "sha": c.sha[:7],
+                        "message": c.commit.message.split("\n")[0][:80],
+                        "date": c.commit.author.date,
+                        "author": c.commit.author.name
+                    })
             except Exception:
                 continue
 
-        if not results:
-            return f"Tidak ada commit terdeteksi dalam {days} hari terakhir."
+        if not all_commits:
+            return f"Tidak ada aktivitas commit terdeteksi dalam {days} hari terakhir."
 
-        header = f"**Aktivitas GitHub — {days} hari terakhir:**\n"
-        return header + "\n".join(results)
+        # Sort globally by date descending
+        all_commits.sort(key=lambda x: x["date"], reverse=True)
 
-    except GithubException as e:
-        return f"GitHub API error: {str(e)}"
+        # Pagination logic
+        total_commits = len(all_commits)
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        paginated_commits = all_commits[start_idx:end_idx]
+
+        if not paginated_commits and page > 1:
+            return f"Halaman {page} kosong. Total hanya ada {total_commits} commit."
+
+        results = []
+        for c in paginated_commits:
+            date_str = c["date"].strftime("%d/%m %H:%M")
+            results.append(f"• 📦 **{c['repo']}** [`{c['sha']}`]: {c['message']} ({date_str})")
+
+        header = f"**Aktivitas GitHub — {days} hari terakhir (Hal {page}):**\n"
+        footer = f"\n\n*Menampilkan {len(paginated_commits)} dari {total_commits} commit.*"
+        
+        if total_commits > end_idx:
+            footer += f" Ketik 'lihat halaman {page + 1}' untuk lebih banyak."
+
+        return header + "\n".join(results) + footer
+
     except Exception as e:
         return f"Gagal scan aktivitas: {str(e)}"
       

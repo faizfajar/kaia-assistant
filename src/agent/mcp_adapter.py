@@ -23,10 +23,13 @@ class MCPToolAdapter:
         Execute a single MCP tool call asynchronously.
         Opens a fresh stdio connection per call for isolation.
         """
+        # Clean up None values so the MCP server can use its own defaults
+        clean_args = {k: v for k, v in args.items() if v is not None}
+        
         async with stdio_client(self.server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                result = await session.call_tool(tool_name, arguments=args)
+                result = await session.call_tool(tool_name, arguments=clean_args)
 
                 if not result.content:
                     return "Tool returned no output."

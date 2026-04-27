@@ -23,3 +23,5 @@ notes.json
 # Local utility scripts
 ingest_data.py
 check_models.py
+# Local Knowledge & Roadmap
+DEVELOPMENT_NOTES.md
