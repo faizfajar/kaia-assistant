@@ -61,6 +61,10 @@ def get_github_tools() -> list:
     global _github_tools_cache
 
     if _github_tools_cache is None:
+        # Don't try to load tools if we are in a non-interactive/scripting context that doesn't need them
+        if os.getenv("SKIP_MCP"):
+            return []
+
         adapter = MCPToolAdapter(GITHUB_SERVER_PARAMS)
         try:
             _github_tools_cache = asyncio.run(adapter.get_tools())
@@ -71,9 +75,6 @@ def get_github_tools() -> list:
 
     return _github_tools_cache
 
-
-GITHUB_TOOLS = get_github_tools()
-EXTENDED_TOOLS = ALL_TOOLS + GITHUB_TOOLS
 
 # ── Node Definitions ───────────────────────────────────────────────────────────
 
@@ -94,11 +95,15 @@ def supervisor_node(state: AgentState) -> dict:
         return {"next": "FINISH"}
 
 
+# Lazy load tools for graph building
+_GITHUB_TOOLS = get_github_tools()
+_EXTENDED_TOOLS = ALL_TOOLS + _GITHUB_TOOLS
+
 # Factory pattern — injects dynamic MCP tools into DevOps worker at build time
-devops_node = get_devops_node(llm, GITHUB_TOOLS)
+devops_node = get_devops_node(llm, _GITHUB_TOOLS)
 
 # Centralized tool execution node for all workers
-tool_node = ToolNode(EXTENDED_TOOLS)
+tool_node = ToolNode(_EXTENDED_TOOLS)
 
 # ── Routing Functions ──────────────────────────────────────────────────────────
 
